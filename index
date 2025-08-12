@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Vandtank – Adafruit IO</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #141b34;
+      --muted: #8aa0c7;
+      --text: #e8f1ff;
+      --accent: #34d399; /* grøn */
+      --info: #38bdf8;   /* cyan */
+      --warn: #fbbf24;   /* gul */
+      --tank-stroke: #b9c7e8;
+      --tank-fill: #3b82f6;
+      --grid: #324166;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 10% 0%, #0e1630 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 920px;
+      margin: 24px auto;
+      padding: 0 16px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.25rem; margin: 0; letter-spacing: .2px; }
+    .sub { color: var(--muted); font-size: .9rem; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      padding: 16px;
+    }
+    .kpi { grid-column: span 12; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+    .kpi .big { font-size: 2rem; font-weight: 700; }
+    .kpi .label { color: var(--muted); font-size: .9rem; margin-top: 6px; }
+    .tank { grid-column: span 12; }
+    .trend { grid-column: span 12; }
+    @media (min-width: 860px) {
+      .tank { grid-column: span 6; }
+      .trend { grid-column: span 6; }
+    }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .pill {
+      font-size: .8rem; color: var(--muted);
+      padding: 4px 8px; border: 1px solid rgba(255,255,255,.1);
+      border-radius: 999px;
+    }
+    .btn {
+      appearance: none; border: none; border-radius: 10px;
+      background: #1f2a4d; color: var(--text); padding: 10px 14px;
+      cursor: pointer; transition: .15s ease-in-out transform, .15s opacity;
+    }
+    .btn:hover { transform: translateY(-1px); opacity: .95; }
+    .cfg {
+      background: rgba(17,24,39,.6);
+      border: 1px dashed rgba(255,255,255,.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid; grid-template-columns: 1fr; gap: 8px;
+    }
+    .cfg label { font-size: .85rem; color: var(--muted); display: grid; gap: 6px; }
+    .cfg input {
+      width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12);
+      background: #0f1530; color: var(--text);
+    }
+    .muted { color: var(--muted); }
+    .right { margin-left: auto; }
+    canvas { width: 100%; height: 260px; display: block; }
+    .foot { color: var(--muted); font-size: .8rem; text-align: center; margin-top: 6px; }
+    .note { font-size: .8rem; color: var(--muted); }
+    .ok { color: var(--accent); }
+    .bad { color: #f87171; }
+    .sp { display:inline-flex; align-items:center; gap:6px; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 16px var(--warn);
+      animation: pulse 1.2s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); opacity:.9; }
+      50% { transform: scale(1.2); opacity:.6; }
+      100% { transform: scale(1); opacity:.9; }
+    }
+    svg { width: 100%; height: auto; display: block; }
+    .legend { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:8px; color: var(--muted); font-size:.85rem; }
+    .badge { display:inline-block; width:12px; height:6px; border-radius:3px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Vandtank – Adafruit IO</h1>
+        <div class="sub">Liggende cylinder · Ø = <span id="cfg-diam">1.0</span> m · L = <span id="cfg-len">3.2</span> m · Max ≈ <span id="cfg-maxL">–</span> L</div>
+      </div>
+      <div class="row">
+        <span class="pill sp"><span class="dot"></span><span id="netState">Opdaterer…</span></span>
+        <button class="btn" id="refreshBtn">Opdatér nu</button>
+      </div>
+    </header>
+
+    <!-- KPI’er -->
+    <section class="cards">
+      <div class="card kpi">
+        <div>
+          <div class="big" id="kpiLevel">– m</div>
+          <div class="label">Vandstand</div>
+        </div>
+        <div>
+          <div class="big" id="kpiVolume">– L</div>
+          <div class="label">Aktuelt indhold</div>
+        </div>
+      </div>
+
+      <!-- Tank-tegning -->
+      <div class="card tank">
+        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+          <div class="sub">Tegning (illustration)</div>
+          <div class="note right">Farver kan afvige på forskellige skærme</div>
+        </div>
+        <div id="tankSvgWrap">
+          <!-- SVG genereres dynamisk -->
+        </div>
+        <div class="legend">
+          <span class="badge" style="background:var(--tank-fill)"></span> Vand
+          <span class="badge" style="background:var(--tank-stroke)"></span> Tank
+        </div>
+      </div>
+
+      <!-- Trend -->
+      <div class="card trend">
+        <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+          <div class="sub">Trend (seneste 24 timer)</div>
+          <div class="note right" id="trendMeta">–</div>
+        </div>
+        <canvas id="trend"></canvas>
+        <div class="foot" id="lastUpdate">Seneste: –</div>
+      </div>
+    </section>
+
+    <!-- Konfiguration (redigér i koden eller her og gem i browseren) -->
+    <section class="card">
+      <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+        <div class="sub">Konfiguration (Adafruit IO)</div>
+        <div class="note">Tip: Gør feeds public for at undgå at sætte nøgle i browseren.</div>
+      </div>
+      <div class="cfg" id="cfg">
+        <label>Adafruit IO brugernavn
+          <input id="inUser" placeholder="f.eks. ditbrugernavn" />
+        </label>
+        <label>Feed for vandstand (key)
+          <input id="inFeedLevel" placeholder="f.eks. tank.level_m" />
+        </label>
+        <label>Feed for volumen (key)
+          <input id="inFeedVolume" placeholder="f.eks. tank.volume_l" />
+        </label>
+        <label>Brug AIO Key (privat adgang – ikke nødvendig for public feeds)
+          <input id="inAioKey" placeholder="(valgfri – bliver kun i denne browser)" />
+        </label>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="saveCfg">Gem i browser</button>
+        <button class="btn" id="resetCfg" style="background:#4b2338;">Nulstil</button>
+        <span class="note">Gemmes kun lokalt i din browser (localStorage).</span>
+      </div>
+    </section>
+
+    <div class="foot">© Din løsning · Kører helt statisk – data hentes direkte fra Adafruit IO’s API.</div>
+  </div>
+
+  <script>
+    /***********************
+     *  KONFIGURATION
+     *  (kan ændres her – eller via formularen “Konfiguration” nederst)
+     ***********************/
+    const CFG = {
+      AIO_USERNAME: "DIT_AIO_BRUGERNAVN",
+      FEED_LEVEL:   "tank.level_m",
+      FEED_VOLUME:  "tank.volume_l",
+      // Hvis dine feeds er public, kan AIO_KEY være tom:
+      AIO_KEY: "",
+      // Tank-geometri (bruges til max-beregning og tegning)
+      TANK_DIAMETER_M: 1.0,
+      TANK_LENGTH_M: 3.2,
+      // UI
+      TIMEZONE: "Europe/Copenhagen",
+      // Trendindlæsning (antal punkter eller tidsvindue)
+      TREND_POINTS: 144 // ~10 min opløsning for 24h
+    };
+
+    // Hent evt. gemt config fra browseren:
+    try {
+      const saved = JSON.parse(localStorage.getItem("aio_cfg_v1") || "{}");
+      Object.assign(CFG, saved);
+    } catch(e){}
+
+    // Opdater små labels
+    document.getElementById("cfg-diam").textContent = CFG.TANK_DIAMETER_M.toFixed(1);
+    document.getElementById("cfg-len").textContent  = CFG.TANK_LENGTH_M.toFixed(1);
+    document.getElementById("cfg-maxL").textContent = Math.round(maxLiters()).toLocaleString("da-DK");
+
+    // Bind konfig-form
+    (function bindConfigForm(){
+      const inUser = document.getElementById("inUser");
+      const inFL   = document.getElementById("inFeedLevel");
+      const inFV   = document.getElementById("inFeedVolume");
+      const inKey  = document.getElementById("inAioKey");
+      inUser.value = CFG.AIO_USERNAME || "";
+      inFL.value   = CFG.FEED_LEVEL || "";
+      inFV.value   = CFG.FEED_VOLUME || "";
+      inKey.value  = CFG.AIO_KEY || "";
+
+      document.getElementById("saveCfg").onclick = ()=>{
+        const ncfg = {
+          AIO_USERNAME: inUser.value.trim(),
+          FEED_LEVEL: inFL.value.trim(),
+          FEED_VOLUME: inFV.value.trim(),
+          AIO_KEY: inKey.value.trim()
+        };
+        localStorage.setItem("aio_cfg_v1", JSON.stringify(ncfg));
+        Object.assign(CFG, ncfg);
+        toast("Konfiguration gemt. Opdaterer…");
+        refreshAll();
+      };
+      document.getElementById("resetCfg").onclick = ()=>{
+        localStorage.removeItem("aio_cfg_v1");
+        location.reload();
+      };
+    })();
+
+    // Knap til manuel opdatering
+    document.getElementById("refreshBtn").onclick = refreshAll;
+
+    /***********************
+     *  Hjælpefunktioner
+     ***********************/
+    function maxLiters(){
+      const r = CFG.TANK_DIAMETER_M / 2;
+      const area = Math.PI * r * r;
+      return area * CFG.TANK_LENGTH_M * 1000.0; // m³ → L
+    }
+    function fmtLiters(L){
+      // Vis fx 2.513 → "2.513 L" eller "2.5k L"
+      if (L >= 1000) return `${Math.round(L).toLocaleString("da-DK")} L`;
+      return `${L.toFixed(0)} L`;
+    }
+    function fmtMeters(m){
+      if (m < 1) return `${m.toFixed(3)} m`;
+      return `${m.toFixed(2)} m`;
+    }
+    function toLocalTime(ts){
+      try {
+        const dt = new Date(ts);
+        return new Intl.DateTimeFormat("da-DK", {
+          timeZone: CFG.TIMEZONE, dateStyle: "short", timeStyle: "medium"
+        }).format(dt);
+      } catch(e){ return String(ts); }
+    }
+    function toast(msg){
+      const el = document.getElementById("netState");
+      el.textContent = msg;
+      el.classList.remove("bad","ok");
+    }
+
+    /***********************
+     *  Adafruit IO – fetch
+     ***********************/
+    function aioURL(feedKey, kind="last", params={}){
+      // kind: "last" eller "list"
+      const base = `https://io.adafruit.com/api/v2/${encodeURIComponent(CFG.AIO_USERNAME)}/feeds/${encodeURIComponent(feedKey)}/data`;
+      const url  = new URL(kind === "last" ? `${base}/last` : base);
+      Object.entries(params).forEach(([k,v])=>url.searchParams.set(k, v));
+      return url.toString();
+    }
+
+    async function aioFetch(url){
+      const opt = { headers: {} };
+      if (CFG.AIO_KEY && CFG.AIO_KEY.trim().length > 0) {
+        opt.headers["X-AIO-Key"] = CFG.AIO_KEY.trim();
+      }
+      const r = await fetch(url, opt);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+
+    async function getLatest(){
+      // Hent seneste datapunkt for begge feeds parallelt
+      const [lastLevel, lastVolume] = await Promise.all([
+        aioFetch(aioURL(CFG.FEED_LEVEL, "last", { include:"value,created_at" })),
+        aioFetch(aioURL(CFG.FEED_VOLUME, "last", { include:"value,created_at" }))
+      ]);
+      return { level: lastLevel, volume: lastVolume };
+    }
+
+    async function getRecent(limit=CFG.TREND_POINTS){
+      // Hent seneste N punkter for level-feeden (nok til 24h typisk)
+      const list = await aioFetch(aioURL(CFG.FEED_LEVEL, "list", { limit: String(limit) }));
+      // API returnerer nyeste først; vend om til ældst→nyest
+      return list.slice().reverse();
+    }
+
+    /***********************
+     *  Tank-SVG
+     ***********************/
+    function renderTankSVG(level_m){
+      const wrap = document.getElementById("tankSvgWrap");
+      const W = 760;  // tegne-bredde
+      const H = 220;  // tegne-højde
+      const pad = 12;
+
+      // Geometri for illustrationen (kapsel)
+      const tankW = W - pad*2;
+      const tankH = 120;
+      const radius = tankH/2;
+      const x = pad;
+      const y = 40;
+
+      // fyld-højde ift. diameter (visuelt; volumenforhold er ikke lineært, men det er en illustration)
+      const ratio = Math.max(0, Math.min(1, level_m / CFG.TANK_DIAMETER_M));
+      const fillH = Math.round(ratio * (tankH - 2));
+
+      // SVG markup
+      const svg = `
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Tankniveau">
+          <defs>
+            <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#60a5fa"/>
+              <stop offset="100%" stop-color="${getComputedStyle(document.documentElement).getPropertyValue('--tank-fill').trim()}"/>
+            </linearGradient>
+            <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(255,255,255,.12)"/>
+              <stop offset="40%" stop-color="rgba(255,255,255,0)"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Tankkrop (capsule / rounded rect) -->
+          <rect x="${x}" y="${y}" width="${tankW}" height="${tankH}"
+                rx="${radius}" ry="${radius}"
+                fill="none" stroke="${getComputedStyle(document.documentElement).getPropertyValue('--tank-stroke').trim()}" stroke-width="3"/>
+
+          <!-- Vandfyld (clip inde i kapslen) -->
+          <clipPath id="clip">
+            <rect x="${x}" y="${y}" width="${tankW}" height="${tankH}" rx="${radius}" ry="${radius}"/>
+          </clipPath>
+
+          <g clip-path="url(#clip)">
+            <rect x="${x+1}" y="${y + tankH - 1 - fillH}" width="${tankW-2}" height="${fillH}"
+                  fill="url(#grad)"/>
+            <!-- små bølger -->
+            <path d="
+              M ${x+6} ${y + tankH - 1 - fillH + 8}
+              q 20 -8 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0 t 40 0
+            " fill="none" stroke="rgba(255,255,255,.25)" stroke-width="2"/>
+          </g>
+
+          <!-- Skala (0, 0.5, 1.0 m) -->
+          <g font-family="monospace" font-size="12" fill="${getComputedStyle(document.documentElement).getPropertyValue('--muted').trim()}">
+            <line x1="${x+tankW+6}" y1="${y+tankH-1}" x2="${x+tankW+36}" y2="${y+tankH-1}" stroke="${getComputedStyle(document.documentElement).getPropertyValue('--grid').trim()}" />
+            <text x="${x+tankW+40}" y="${y+tankH+4}">0 m</text>
+
+            <line x1="${x+tankW+6}" y1="${y+(tankH/2)}" x2="${x+tankW+36}" y2="${y+(tankH/2)}" stroke="${getComputedStyle(document.documentElement).getPropertyValue('--grid').trim()}" />
+            <text x="${x+tankW+40}" y="${y+(tankH/2)+4}">0.5 m</text>
+
+            <line x1="${x+tankW+6}" y1="${y+1}" x2="${x+tankW+36}" y2="${y+1}" stroke="${getComputedStyle(document.documentElement).getPropertyValue('--grid').trim()}" />
+            <text x="${x+tankW+40}" y="${y+6}">1.0 m</text>
+          </g>
+        </svg>
+      `;
+      wrap.innerHTML = svg;
+    }
+
+    /***********************
+     *  Trend (Canvas)
+     ***********************/
+    function drawTrend(canvas, points){
+      // points: [{t:Date, v:Number}] ældst → nyest
+      const ctx = canvas.getContext("2d");
+      const W = canvas.width = canvas.clientWidth * devicePixelRatio;
+      const H = canvas.height = canvas.clientHeight * devicePixelRatio;
+
+      // Margener
+      const ml = 36 * devicePixelRatio, mr = 10 * devicePixelRatio;
+      const mt = 14 * devicePixelRatio, mb = 24 * devicePixelRatio;
+
+      // Akse-område
+      const x0 = ml, x1 = W - mr;
+      const y0 = H - mb, y1 = mt;
+
+      // Baggrund
+      ctx.clearRect(0,0,W,H);
+
+      // Grid vandret (0, 0.5, 1.0 m)
+      ctx.strokeStyle = getCss('--grid'); ctx.lineWidth = 1;
+      [0, 0.5, 1.0].forEach(val=>{
+        const r = val / CFG.TANK_DIAMETER_M; // 0..1
+        const y = y0 - r * (y0 - y1);
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+        ctx.fillStyle = getCss('--muted');
+        ctx.font = `${12*devicePixelRatio}px system-ui,Segoe UI,Arial`;
+        ctx.fillText(val.toFixed(1), x1 + 6*devicePixelRatio, y + 4*devicePixelRatio);
+      });
+
+      if (!points || points.length < 2){
+        ctx.fillStyle = getCss('--muted');
+        ctx.font = `${14*devicePixelRatio}px system-ui,Segoe UI,Arial`;
+        ctx.fillText("Indsamler trend…", x0+10*devicePixelRatio, (y0+y1)/2);
+        return;
+      }
+
+      // X-skala: ældst→nyest fordelt jævnt
+      const n = points.length;
+      ctx.beginPath();
+      for (let i=0;i<n;i++){
+        const r = Math.max(0, Math.min(1, points[i].v / CFG.TANK_DIAMETER_M));
+        const x = x0 + i * (x1 - x0) / (n - 1);
+        const y = y0 - r * (y0 - y1);
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle = getCss('--warn');
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.stroke();
+
+      // Små punkter
+      ctx.fillStyle = getCss('--warn');
+      for (let i=0;i<n;i++){
+        const r = Math.max(0, Math.min(1, points[i].v / CFG.TANK_DIAMETER_M));
+        const x = x0 + i * (x1 - x0) / (n - 1);
+        const y = y0 - r * (y0 - y1);
+        ctx.beginPath(); ctx.arc(x,y,2.2*devicePixelRatio,0,Math.PI*2); ctx.fill();
+      }
+    }
+
+    function getCss(varName){
+      return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    }
+
+    /***********************
+     *  Hoved-flow
+     ***********************/
+    let latestTS = null;
+
+    async function refreshAll(){
+      try {
+        toast("Henter data…");
+        const latest = await getLatest();
+        const level = parseFloat(latest.level.value);
+        const volume = parseFloat(latest.volume.value);
+        latestTS = latest.level.created_at || latest.volume.created_at;
+
+        // KPI'er
+        document.getElementById("kpiLevel").textContent = fmtMeters(level);
+        document.getElementById("kpiVolume").textContent = fmtLiters(volume);
+
+        // Tank
+        renderTankSVG(level);
+
+        // Trend
+        const raw = await getRecent(CFG.TREND_POINTS);
+        // Map til {t, v}
+        const pts = raw.map(d => ({
+          t: new Date(d.created_at),
+          v: parseFloat(d.value)
+        }));
+        const cvs = document.getElementById("trend");
+        drawTrend(cvs, pts);
+
+        // Metadata
+        document.getElementById("trendMeta").textContent = `${pts.length} punkter`;
+        document.getElementById("lastUpdate").textContent = "Seneste: " + (latestTS ? toLocalTime(latestTS) : "–");
+        const state = document.getElementById("netState");
+        state.textContent = CFG.AIO_KEY ? "Online (privat nøgle)" : "Online (public)";
+        state.classList.remove("bad"); state.classList.add("ok");
+      } catch (err){
+        console.error(err);
+        document.getElementById("netState").textContent = "Fejl ved hentning";
+        document.getElementById("netState").classList.remove("ok"); 
+        document.getElementById("netState").classList.add("bad");
+      }
+    }
+
+    // Auto-opdater hvert 60. sekund
+    setInterval(refreshAll, 60_000);
+    // Første load
+    refreshAll();
+  </script>
+</body>
+</html>
